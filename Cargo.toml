@@ -15,3 +15,6 @@ unicode-width = "0.2"
 
 [profile.release]
 opt-level = 3
+
+[dev-dependencies]
+serde_path_to_error = "0.1.20"
