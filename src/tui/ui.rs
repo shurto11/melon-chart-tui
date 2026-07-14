@@ -329,7 +329,7 @@ fn draw_daily_song(frame: &mut Frame, app: &mut App, area: Rect) {
         };
         rows.push(Row::new(vec![
             Cell::from(date),
-            Cell::from(format!("{}", p.ranking)),
+            Cell::from(p.ranking.map_or("-".to_string(), |r| r.to_string())),
             Cell::from(format!("{}", count)),
             diff_cell,
         ]));
@@ -378,7 +378,7 @@ fn draw_grid(frame: &mut Frame, app: &mut App, area: Rect) {
                 dates.push(date.clone());
                 [None; 24]
             });
-            entry[hour] = Some(p.ranking);
+            entry[hour] = p.ranking;
         }
     }
     dates.sort();

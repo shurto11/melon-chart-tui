@@ -102,10 +102,12 @@ pub struct ChartData {
 #[derive(Debug, Clone, Deserialize)]
 pub struct TrendPoint {
     pub time: String,
-    pub ranking: i64,
+    /// 順位（チャート圏外の日はnull。countのみ記録される）
+    #[serde(default)]
+    pub ranking: Option<i64>,
     #[serde(default)]
     #[allow(dead_code)]
-    pub previous: i64,
+    pub previous: Option<i64>,
     /// 이용자 수（dailyのみ）
     #[serde(default)]
     pub count: Option<i64>,
