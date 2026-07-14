@@ -220,17 +220,19 @@ fn draw_list(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             Style::default().add_modifier(Modifier::BOLD)
         };
-        let mut info_lines = vec![
+        let song_cell = Cell::from(Text::from(vec![
             Line::from(Span::styled(r.song.name.clone(), name_style)),
             Line::from(Span::styled(
                 r.song.artist_names(),
                 Style::default().fg(Color::Cyan),
             )),
-            Line::from(Span::styled(
-                r.song.album_name().to_string(),
-                Style::default().fg(Color::DarkGray),
-            )),
-        ];
+        ]));
+        let album_cell = Cell::from(Span::styled(
+            r.song.album_name().to_string(),
+            Style::default().fg(Color::DarkGray),
+        ));
+
+        let mut cells = vec![rank_cell, art_cell, song_cell, album_cell];
         if is_daily {
             let count = r.count.unwrap_or(0);
             let diff = r.count_diff.unwrap_or(0);
@@ -241,14 +243,16 @@ fn draw_list(frame: &mut Frame, app: &mut App, area: Rect) {
             } else {
                 Span::styled("0".to_string(), Style::default().fg(Color::DarkGray))
             };
-            info_lines.push(Line::from(vec![
-                Span::styled(format!("이용자 {}  ", count), Style::default().fg(Color::Gray)),
-                diff_span,
-            ]));
+            cells.push(Cell::from(Text::from(vec![
+                Line::from(Span::styled(
+                    format!("{}", count),
+                    Style::default().fg(Color::Gray),
+                )),
+                Line::from(diff_span),
+            ])));
         }
-        let info_cell = Cell::from(Text::from(info_lines));
 
-        let mut row = Row::new(vec![rank_cell, art_cell, info_cell]).height(ROW_H);
+        let mut row = Row::new(cells).height(ROW_H);
         if selected {
             row = row.style(Style::default().bg(Color::Rgb(40, 40, 60)));
         }
@@ -260,11 +264,15 @@ fn draw_list(frame: &mut Frame, app: &mut App, area: Rect) {
         request_album_art(app, url);
     }
 
-    let widths = [
+    let mut widths = vec![
         Constraint::Length(5),
         Constraint::Length(ART_W as u16),
-        Constraint::Min(20),
+        Constraint::Min(20),      // 曲名 / アーティスト名
+        Constraint::Percentage(30), // アルバム名
     ];
+    if is_daily {
+        widths.push(Constraint::Length(12)); // 이용자 수 / 변화량
+    }
     let table = Table::new(table_rows, widths)
         .column_spacing(1)
         .block(Block::default().borders(Borders::NONE));
