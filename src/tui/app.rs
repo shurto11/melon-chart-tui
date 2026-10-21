@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{Receiver, Sender};
 
 use crate::fetch::Chart;
-use crate::models::{AsciiArt, ChartRow, TrendResponse};
+use crate::models::{AsciiArt, ChartRow, TrendPoint, TrendResponse};
 
 /// 入力モード
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,6 +24,8 @@ pub enum Screen {
 pub type ArtMsg = (String, AsciiArt);
 /// trend取得スレッドからの結果 (cache_key, song_id, result)
 pub type TrendMsg = (String, String, Result<TrendResponse, String>);
+/// TOP100 trend過去ページ取得スレッドからの結果 (cache_key, 要求時の最古time, result)
+pub type OlderTrendMsg = (String, String, Result<Vec<TrendPoint>, String>);
 
 /// 一覧に戻るためのスクロール位置保存
 #[derive(Debug, Clone, Copy)]
@@ -61,6 +63,11 @@ pub struct App {
     pub trend_cache: HashMap<String, TrendResponse>,
     pub trend_pending: bool,
     pub trend_rx: Option<Receiver<TrendMsg>>,
+    // TOP100 trendの過去ページ（31日単位で遡って先頭に追加）
+    pub older_pending: bool,
+    pub older_rx: Option<Receiver<OlderTrendMsg>>,
+    /// これ以上遡れないTOP100 trendのキー
+    pub trend_exhausted: HashSet<String>,
 
     // Spotify URLキャッシュ（key = song_id、None = Spotify無し）
     pub spotify_cache: HashMap<String, Option<String>>,
@@ -113,6 +120,9 @@ impl App {
             trend_cache: HashMap::new(),
             trend_pending: false,
             trend_rx: None,
+            older_pending: false,
+            older_rx: None,
+            trend_exhausted: HashSet::new(),
             spotify_cache: HashMap::new(),
             pending_play_song: None,
             spotify_url: String::new(),

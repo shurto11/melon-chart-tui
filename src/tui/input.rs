@@ -104,22 +104,14 @@ fn list_len(app: &App) -> usize {
     app.rows().len()
 }
 
-/// 曲情報画面のスクロール可能行数（daily=trend点数, grid=ユニーク日付数）
+/// 曲情報画面のスクロール可能行数（daily=trend点数, grid=日付数）
 fn detail_len(app: &App) -> usize {
     let Some(trend) = app.current_trend() else {
         return 0;
     };
     match app.chart {
         Chart::Daily => trend.data.data.len(),
-        Chart::Top100 => {
-            let mut set = std::collections::HashSet::new();
-            for p in &trend.data.data {
-                if let Some(d) = p.time.get(0..10) {
-                    set.insert(d.to_string());
-                }
-            }
-            set.len()
-        }
+        Chart::Top100 => trend.data.hourly_grid().len(),
     }
 }
 
@@ -316,6 +308,85 @@ pub fn process_trend_result(app: &mut App, key: String, song_id: String, res: Re
     }
 }
 
+/// グリッド先頭からこの行数以内を表示中なら、さらに過去のTOP100 trendを取得する
+const OLDER_PREFETCH_ROWS: usize = 10;
+
+/// メインループから呼ぶ: TOP100曲情報で先頭付近を表示中なら31日前のページを取得
+pub fn ensure_older_trend(app: &mut App) {
+    if app.screen != Screen::SongDetail || app.chart != Chart::Top100 {
+        return;
+    }
+    if app.older_pending || app.detail_offset >= OLDER_PREFETCH_ROWS {
+        return; // single-flight
+    }
+    let Some(song_id) = app.detail_song_id.clone() else {
+        return;
+    };
+    let key = App::trend_key(Chart::Top100, &song_id);
+    if app.trend_exhausted.contains(&key) {
+        return;
+    }
+    let Some(oldest) = app
+        .trend_cache
+        .get(&key)
+        .and_then(|t| t.data.data.first())
+        .map(|p| p.time.clone())
+    else {
+        return;
+    };
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.older_rx = Some(rx);
+    app.older_pending = true;
+    std::thread::spawn(move || {
+        let res = fetch::fetch_top100_trend_older(&song_id, &oldest).map_err(|e| e.to_string());
+        let _ = tx.send((key, oldest, res));
+    });
+}
+
+/// メインループから呼ぶ: 過去ページを既存trendの先頭に追加
+pub fn process_older_trend_result(
+    app: &mut App,
+    key: String,
+    oldest: String,
+    res: Result<Vec<crate::models::TrendPoint>, String>,
+) {
+    app.older_pending = false;
+    let points = match res {
+        Ok(points) => points,
+        Err(e) => {
+            // 失敗のたびに再試行し続けないよう打ち切る（rで再取得）
+            app.trend_exhausted.insert(key);
+            app.show_error(&format!("Older trend fetch failed: {}", e));
+            return;
+        }
+    };
+    // リロード等で要求後にtrendが差し替わっていたら捨てる
+    let Some(trend) = app.trend_cache.get_mut(&key) else {
+        return;
+    };
+    if trend.data.data.first().map(|p| p.time.as_str()) != Some(oldest.as_str()) {
+        return;
+    }
+    let mut older: Vec<_> = points.into_iter().filter(|p| p.time < oldest).collect();
+    // ランクインが無い31日窓まで遡ったら終端とみなす
+    if !older.iter().any(|p| p.ranking.is_some()) {
+        app.trend_exhausted.insert(key);
+        return;
+    }
+    let before = trend.data.hourly_grid().len();
+    older.append(&mut trend.data.data);
+    trend.data.data = older;
+    let added = trend.data.hourly_grid().len().saturating_sub(before);
+
+    // 表示中なら先頭に増えた行数だけずらして見ている位置を保つ
+    let showing = app.screen == Screen::SongDetail
+        && app.chart == Chart::Top100
+        && app.detail_song_id.as_deref().map(|id| App::trend_key(Chart::Top100, id)) == Some(key);
+    if showing {
+        app.detail_offset += added;
+    }
+}
+
 // ---- リロード ----
 
 fn reload(app: &mut App) {
@@ -337,6 +408,7 @@ fn reload(app: &mut App) {
     }
     // trendキャッシュも無効化（順位が変わっているため）
     app.trend_cache.clear();
+    app.trend_exhausted.clear();
     let len = list_len(app);
     if len > 0 {
         app.list_index = app.list_index.min(len - 1);

@@ -15,7 +15,7 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 
 use fetch::Chart;
 use tui::app::App;
-use tui::input::{handle_key, process_trend_result};
+use tui::input::{ensure_older_trend, handle_key, process_older_trend_result, process_trend_result};
 use tui::ui::draw;
 
 fn main() -> Result<()> {
@@ -87,6 +87,22 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App)
                 }
             }
         }
+
+        // TOP100 trend過去ページ受信
+        if let Some(rx) = app.older_rx.take() {
+            match rx.try_recv() {
+                Ok((key, oldest, res)) => {
+                    process_older_trend_result(app, key, oldest, res);
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    app.older_rx = Some(rx);
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    app.older_pending = false;
+                }
+            }
+        }
+        ensure_older_trend(app);
 
         // Spotify再生結果受信
         if let Some(rx) = app.spotify_rx.take() {

@@ -127,3 +127,32 @@ pub struct TrendResponse {
 pub struct TrendData {
     pub data: Vec<TrendPoint>,
 }
+
+/// 1日分の時刻別順位（0〜23時）
+pub type HourlyRanks = [Option<i64>; 24];
+
+impl TrendData {
+    /// 時間単位trendを日付×時刻にピボット（日付昇順）
+    ///
+    /// TOP100は圏外の時刻もnullで返るため、最初にランクインした日より前の空行は除く
+    pub fn hourly_grid(&self) -> Vec<(String, HourlyRanks)> {
+        let mut grid: std::collections::BTreeMap<&str, HourlyRanks> =
+            std::collections::BTreeMap::new();
+        for p in &self.data {
+            let Some(date) = p.time.get(0..10) else {
+                continue;
+            };
+            let Some(hour) = p.time.get(11..13).and_then(|h| h.parse::<usize>().ok()) else {
+                continue;
+            };
+            if hour >= 24 {
+                continue;
+            }
+            grid.entry(date).or_insert([None; 24])[hour] = p.ranking;
+        }
+        grid.into_iter()
+            .skip_while(|(_, hours)| hours.iter().all(Option::is_none))
+            .map(|(date, hours)| (date.to_string(), hours))
+            .collect()
+    }
+}

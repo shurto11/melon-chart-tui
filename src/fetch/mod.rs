@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use serde::de::DeserializeOwned;
 
-use crate::models::{AsciiArt, AsciiPixel, ChartData, TrendResponse};
+use crate::models::{AsciiArt, AsciiPixel, ChartData, TrendPoint, TrendResponse};
 
 const BASE: &str = "https://guyso.me";
 const UA: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
@@ -85,10 +85,45 @@ pub fn fetch_chart(chart: Chart) -> Result<ChartData> {
     Ok(props.data)
 }
 
-/// 曲trendを取得
+/// 曲trendを取得（TOP100は直近31日分のみ。それより前は fetch_top100_trend_older）
 pub fn fetch_trend(chart: Chart, song_id: &str) -> Result<TrendResponse> {
     let url = format!("{}{}", BASE, chart.trend_path(song_id));
     fetch_page_props(&url)
+}
+
+/// TOP100 trendの過去31日分を取得
+///
+/// サイトは `?end=YYYY-MM-DD` を終了日とする31日窓で返す（圏外の時刻もnullで埋まる）。
+/// `oldest` は取得済みの最古の時刻で、その前日を終了日として要求する
+pub fn fetch_top100_trend_older(song_id: &str, oldest: &str) -> Result<Vec<TrendPoint>> {
+    let end = prev_day(oldest).ok_or_else(|| anyhow!("Invalid trend time: {}", oldest))?;
+    let url = format!("{}{}?end={}", BASE, Chart::Top100.trend_path(song_id), end);
+    let props: TrendResponse = fetch_page_props(&url)?;
+    Ok(props.data.data)
+}
+
+/// "YYYY-MM-DD..." の前日を "YYYY-MM-DD" で返す
+fn prev_day(time: &str) -> Option<String> {
+    let y: i32 = time.get(0..4)?.parse().ok()?;
+    let m: u32 = time.get(5..7)?.parse().ok()?;
+    let d: u32 = time.get(8..10)?.parse().ok()?;
+    let (y, m, d) = if d > 1 {
+        (y, m, d - 1)
+    } else if m > 1 {
+        (y, m - 1, days_in_month(y, m - 1))
+    } else {
+        (y - 1, 12, 31)
+    };
+    Some(format!("{:04}-{:02}-{:02}", y, m, d))
+}
+
+fn days_in_month(y: i32, m: u32) -> u32 {
+    match m {
+        2 if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    }
 }
 
 /// アルバム画像URLからカラーASCIIアートに変換
@@ -126,4 +161,19 @@ pub fn fetch_album_art_ascii(image_url: &str, width: u32, height: u32) -> Result
     }
 
     Ok(lines)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::prev_day;
+
+    #[test]
+    fn prev_day_handles_month_and_year_boundaries() {
+        assert_eq!(prev_day("2026-09-21T00:00:00").as_deref(), Some("2026-09-20"));
+        assert_eq!(prev_day("2026-10-01T00:00:00").as_deref(), Some("2026-09-30"));
+        assert_eq!(prev_day("2024-03-01").as_deref(), Some("2024-02-29"));
+        assert_eq!(prev_day("2026-03-01").as_deref(), Some("2026-02-28"));
+        assert_eq!(prev_day("2026-01-01").as_deref(), Some("2025-12-31"));
+        assert_eq!(prev_day("bad"), None);
+    }
 }

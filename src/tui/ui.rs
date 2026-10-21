@@ -58,7 +58,7 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         }
     };
     let time = app.chart_time().unwrap_or("");
-    let spinner = if app.loading || app.trend_pending {
+    let spinner = if app.loading || app.trend_pending || app.older_pending {
         let frames = ["|", "/", "-", "\\"];
         format!(" {}", frames[(app.tick / 2 % 4) as usize])
     } else {
@@ -357,8 +357,21 @@ fn draw_daily_song(frame: &mut Frame, app: &mut App, area: Rect) {
 
 /// TOP100の曲情報グリッド（縦=日付、横=時刻、セル=順位）
 fn draw_grid(frame: &mut Frame, app: &mut App, area: Rect) {
-    if app.current_trend().is_none() {
-        let msg = if app.trend_pending { "Loading trend..." } else { "No trend data" };
+    // 日付×時刻にピボット（所有データを構築して借用を切る）
+    let grid = match app.current_trend() {
+        Some(trend) => trend.data.hourly_grid(),
+        None => {
+            let msg = if app.trend_pending { "Loading trend..." } else { "No trend data" };
+            frame.render_widget(
+                Paragraph::new(msg).style(Style::default().fg(Color::DarkGray)),
+                area,
+            );
+            return;
+        }
+    };
+    if grid.is_empty() {
+        // 直近31日が圏外なら過去ページを遡っている途中
+        let msg = if app.older_pending { "Loading trend..." } else { "No TOP100 ranking" };
         frame.render_widget(
             Paragraph::new(msg).style(Style::default().fg(Color::DarkGray)),
             area,
@@ -366,37 +379,12 @@ fn draw_grid(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
-    // 日付×時刻にピボット（所有データを構築して借用を切る）
-    let mut dates: Vec<String> = Vec::new();
-    let mut grid: std::collections::HashMap<String, [Option<i64>; 24]> =
-        std::collections::HashMap::new();
-    {
-        let trend = app.current_trend().unwrap();
-        for p in &trend.data.data {
-            let date = p.time.get(0..10).unwrap_or("").to_string();
-            let hour: usize = p
-                .time
-                .get(11..13)
-                .and_then(|h| h.parse().ok())
-                .unwrap_or(0);
-            if hour >= 24 {
-                continue;
-            }
-            let entry = grid.entry(date.clone()).or_insert_with(|| {
-                dates.push(date.clone());
-                [None; 24]
-            });
-            entry[hour] = p.ranking;
-        }
-    }
-    dates.sort();
-
     let visible = area.height.saturating_sub(1).max(1) as usize;
-    if app.detail_offset + visible > dates.len() {
-        app.detail_offset = dates.len().saturating_sub(visible);
+    if app.detail_offset + visible > grid.len() {
+        app.detail_offset = grid.len().saturating_sub(visible);
     }
     let start = app.detail_offset;
-    let end = (start + visible).min(dates.len());
+    let end = (start + visible).min(grid.len());
 
     // ヘッダ: 날짜 + 0..23
     let mut header_cells = vec![Cell::from("날짜")];
@@ -407,9 +395,9 @@ fn draw_grid(frame: &mut Frame, app: &mut App, area: Rect) {
         .style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD));
 
     let mut rows: Vec<Row> = Vec::new();
-    for date in &dates[start..end] {
-        let hours = grid.get(date).cloned().unwrap_or([None; 24]);
-        let mut cells = vec![Cell::from(date.get(5..).unwrap_or(date).to_string())];
+    for (date, hours) in &grid[start..end] {
+        // 複数年に渡るので YY-MM-DD
+        let mut cells = vec![Cell::from(date.get(2..).unwrap_or(date).to_string())];
         for h in 0..24 {
             let cell = match hours[h] {
                 Some(rank) => {
@@ -423,7 +411,7 @@ fn draw_grid(frame: &mut Frame, app: &mut App, area: Rect) {
         rows.push(Row::new(cells));
     }
 
-    let mut widths = vec![Constraint::Length(6)];
+    let mut widths = vec![Constraint::Length(9)];
     for _ in 0..24 {
         widths.push(Constraint::Length(3));
     }
@@ -459,3 +447,4 @@ fn rank_colors(rank: i64) -> (Color, Color) {
 fn display_width(s: &str) -> usize {
     UnicodeWidthStr::width(s)
 }
+
