@@ -325,7 +325,7 @@ fn draw_daily_song(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let mut rows: Vec<Row> = Vec::new();
     for p in &points[start..end] {
-        let date = p.time.get(0..10).unwrap_or(&p.time).to_string();
+        let date = p.time.get(0..10).unwrap_or(&p.time);
         let count = p.count.unwrap_or(0);
         let diff = p.count_diff.unwrap_or(0);
         let diff_cell = if diff > 0 {
@@ -336,7 +336,7 @@ fn draw_daily_song(frame: &mut Frame, app: &mut App, area: Rect) {
             Cell::from("0").style(Style::default().fg(Color::DarkGray))
         };
         rows.push(Row::new(vec![
-            Cell::from(date),
+            date_cell(date, date),
             Cell::from(p.ranking.map_or("-".to_string(), |r| r.to_string())),
             Cell::from(format!("{}", count)),
             diff_cell,
@@ -344,7 +344,7 @@ fn draw_daily_song(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 
     let widths = [
-        Constraint::Length(12),
+        Constraint::Length(13),
         Constraint::Length(6),
         Constraint::Length(12),
         Constraint::Length(12),
@@ -397,7 +397,7 @@ fn draw_grid(frame: &mut Frame, app: &mut App, area: Rect) {
     let mut rows: Vec<Row> = Vec::new();
     for (date, hours) in &grid[start..end] {
         // 複数年に渡るので YY-MM-DD
-        let mut cells = vec![Cell::from(date.get(2..).unwrap_or(date).to_string())];
+        let mut cells = vec![date_cell(date.get(2..).unwrap_or(date), date)];
         for h in 0..24 {
             let cell = match hours[h] {
                 Some(rank) => {
@@ -411,12 +411,41 @@ fn draw_grid(frame: &mut Frame, app: &mut App, area: Rect) {
         rows.push(Row::new(cells));
     }
 
-    let mut widths = vec![Constraint::Length(9)];
+    let mut widths = vec![Constraint::Length(12)];
     for _ in 0..24 {
         widths.push(Constraint::Length(3));
     }
     let table = Table::new(rows, widths).header(header).column_spacing(0);
     frame.render_widget(table, area);
+}
+
+/// 曜日（日曜始まり）
+const WEEKDAYS_KO: [&str; 7] = ["일", "월", "화", "수", "목", "금", "토"];
+
+/// "YYYY-MM-DD..." の曜日（0=日曜〜6=土曜）。Sakamotoの方法
+fn weekday(date: &str) -> Option<usize> {
+    const T: [i32; 12] = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
+    let y: i32 = date.get(0..4)?.parse().ok()?;
+    let m: usize = date.get(5..7)?.parse().ok()?;
+    let d: i32 = date.get(8..10)?.parse().ok()?;
+    if !(1..=12).contains(&m) {
+        return None;
+    }
+    let y = if m < 3 { y - 1 } else { y };
+    Some(((y + y / 4 - y / 100 + y / 400 + T[m - 1] + d) % 7) as usize)
+}
+
+/// 日付セル（label の右に曜日。土曜=青、日曜=赤）
+fn date_cell(label: &str, date: &str) -> Cell<'static> {
+    let Some(wd) = weekday(date) else {
+        return Cell::from(label.to_string());
+    };
+    let style = match wd {
+        0 => Style::default().fg(Color::Red),
+        6 => Style::default().fg(Color::Blue),
+        _ => Style::default(),
+    };
+    Cell::from(format!("{} {}", label, WEEKDAYS_KO[wd])).style(style)
 }
 
 /// 順位に応じたセル配色（背景, 前景）
@@ -448,3 +477,17 @@ fn display_width(s: &str) -> usize {
     UnicodeWidthStr::width(s)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::weekday;
+
+    #[test]
+    fn weekday_from_date() {
+        assert_eq!(weekday("2026-10-21T09:00:00"), Some(3)); // 수
+        assert_eq!(weekday("2026-10-18"), Some(0)); // 일
+        assert_eq!(weekday("2026-10-17"), Some(6)); // 토
+        assert_eq!(weekday("2024-02-29"), Some(4)); // 목
+        assert_eq!(weekday("2026-01-01"), Some(4)); // 목
+        assert_eq!(weekday("bad"), None);
+    }
+}
